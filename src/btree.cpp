@@ -134,14 +134,274 @@ xi::UInt BaseBTree::allocNewRootPage(PageWrapper& pw)
 
 Byte* BaseBTree::search(const Byte* k)
 {
-    // TODO: релаизовать студентам!
-    return nullptr;
+    PageWrapper root(this);
+    root.readPage(getRootPageNum());
+    if(root.getKeysNum() == 0)
+    {
+        return nullptr;
+    }
+    else
+    {
+        return search(root, k);
+    }
+}
+
+Byte* BaseBTree::search(PageWrapper& page, const xi::Byte *k)
+{
+    UShort iter = 0;
+    while (iter < page.getKeysNum() && getComparator()->compare(page.getKey(iter), k, getRecSize()))
+    {
+        ++iter;
+    }
+    if(iter < page.getKeysNum() && getComparator()->isEqual(page.getKey(iter), k, getRecSize()))
+    {
+        Byte* result = new Byte[getRecSize()];
+        page.copyKey(result, page.getKey(iter));
+        return result;
+    }
+    if(page.isLeaf())
+    {
+        return nullptr;
+    }
+    else
+    {
+        PageWrapper iChild(this);
+        iChild.readPage(page.getCursor(iter));
+        return search(iChild, k);
+    }
 }
 
 int BaseBTree::searchAll(const Byte* k, std::list<Byte*>& keys)
 {
-    // TODO: релаизовать студентам!   
-    //return 0;
+    PageWrapper root(this);
+    root.readPage(getRootPageNum());
+    if(root.getKeysNum() == 0)
+    {
+        return 0;
+    }
+    else
+    {
+        searchAll(root, k, keys);
+        return  keys.size();
+    }
+}
+
+void BaseBTree::searchAll(PageWrapper &page, const xi::Byte *k, std::list<Byte *> &keys)
+{
+    UShort iter = 0;
+    while (true)
+    {
+        while (iter < page.getKeysNum() && getComparator()->compare(page.getKey(iter), k, getRecSize()))
+        {
+            ++iter;
+        }
+        if (iter < page.getKeysNum() && getComparator()->isEqual(page.getKey(iter), k, getRecSize()))
+        {
+            Byte *result = new Byte[getRecSize()];
+            page.copyKey(result, page.getKey(iter));
+            keys.push_back(result);
+            if(!page.isLeaf())
+            {
+                PageWrapper iChild(this);
+                iChild.readPage(page.getCursor(iter));
+                searchAll(iChild, k, keys);
+            }
+            ++iter;
+            continue;
+        }
+        if(!page.isLeaf())
+        {
+            PageWrapper iChild(this);
+            iChild.readPage(page.getCursor(iter));
+            searchAll(iChild, k, keys);
+        }
+
+        return;
+    }
+}
+
+bool BaseBTree::remove(const Byte *k)
+{
+    PageWrapper page(this);
+    UInt i = 0;
+    page.readPage(getRootPageNum());
+    int num = findPageWithK(page, k);
+    if (num == -1)
+        return false;
+
+    page.readPage(num);
+
+    while (i < page.getKeysNum() && getComparator()->compare(page.getKey(i), k, getRecSize()))
+        ++i;
+
+    if (page.isLeaf())
+    {
+        page.copyKeys(page.getKey(i), page.getKey(i + 1), page.getKeysNum() - i - 1);
+        page.setKeyNum(page.getKeysNum() - 1);
+        page.writePage();
+        return true;
+    }
+
+    PageWrapper leftChild(this);
+    leftChild.readPage(page.getCursor(i));
+    if (leftChild.getKeysNum() >= getOrder())
+    {
+        while(!leftChild.isLeaf())
+            leftChild.readPage(leftChild.getCursor(leftChild.getKeysNum()));
+
+        page.copyKey(page.getKey(i), leftChild.getKey(leftChild.getKeysNum() - 1));
+        leftChild.setKeyNum(leftChild.getKeysNum() - 1);
+        page.writePage();
+        leftChild.writePage();
+        return true;
+    }
+    PageWrapper rightChild(this);
+    rightChild.readPage(page.getCursor(i + 1));
+    if (rightChild.getKeysNum() >= getOrder())
+    {
+        if (!rightChild.isLeaf())
+            rightChild.readPage(rightChild.getCursor(0));
+        page.copyKey(page.getKey(i), rightChild.getKey(0));
+        rightChild.copyKeys(rightChild.getKey(0), rightChild.getKey(1), rightChild.getKeysNum() - 1);
+        rightChild.setKeyNum(rightChild.getKeysNum() - 1);
+        page.writePage();
+        leftChild.writePage();
+        rightChild.writePage();
+        return true;
+    }
+
+    leftChild.setKeyNum(getMaxKeys());
+    leftChild.copyKey(leftChild.getKey(getOrder()), page.getKey(i));
+    leftChild.copyKeys(leftChild.getKey(getOrder() + 1), rightChild.getKey(0), getMinKeys());
+    leftChild.copyCursors(leftChild.getCursorPtr(getOrder() + 2), rightChild.getCursorPtr(0), getOrder());
+    page.copyKeys(page.getKey(i), page.getKey(i + 1), page.getKeysNum() - i - 1);
+    page.copyCursors(page.getCursorPtr(i), page.getCursorPtr(i + 2), page.getKeysNum() - i - 2);
+    page.writePage();
+    leftChild.writePage();
+    rightChild.writePage();
+    return remove(k);
+}
+
+
+UInt BaseBTree::findPageWithK(BaseBTree::PageWrapper &page, const xi::Byte *k)
+{
+    UShort iter = 0;
+    while (iter < page.getKeysNum() - 1 && getComparator()->compare(page.getKey(iter), k, getRecSize()))
+        ++iter;
+
+    if (getComparator()->isEqual(page.getKey(iter), k, getRecSize()))
+        return page.getPageNum();
+
+    if (page.isLeaf())
+        return -1;
+
+    if (!getComparator()->compare(k, page.getKey(iter), getRecSize()))
+        ++iter;
+
+    PageWrapper iChild(this);
+    iChild.readPage(page.getCursor(iter));
+
+    if (iChild.getKeysNum() == getMinKeys())
+    {
+        if (iter != 0)
+        {
+            PageWrapper leftChild(this);
+            leftChild.readPage(page.getCursor(iter - 1));
+
+            if (leftChild.getKeysNum() >= getOrder())
+            {
+
+                --iter;
+                iChild.setKeyNum(iChild.getKeysNum() + 1);
+                iChild.copyKeys(iChild.getKey(1), iChild.getKey(0), iChild.getKeysNum() - 1);
+                iChild.copyKey(iChild.getKey(0), page.getKey(iter));
+                page.copyKey(page.getKey(iter), leftChild.getKey(leftChild.getKeysNum() - 1));
+                iChild.copyCursors(iChild.getCursorPtr(1), iChild.getCursorPtr(0), iChild.getKeysNum());
+                iChild.setCursor(0, leftChild.getCursor(leftChild.getKeysNum()));
+                leftChild.setKeyNum(leftChild.getKeysNum() - 1);
+                iChild.writePage();
+                leftChild.writePage();
+                page.writePage();
+                return findPageWithK(iChild, k);
+            }
+        }
+        if (page.getKeysNum() - iter > 0)
+        {
+            PageWrapper rightChild(this);
+            rightChild.readPage(page.getCursor(iter + 1));
+
+            if (rightChild.getKeysNum() >= getOrder())
+            {
+                iChild.setKeyNum(iChild.getKeysNum() + 1);
+                iChild.copyKey(iChild.getKey(iChild.getKeysNum() - 1), page.getKey(iter));
+                page.copyKey(page.getKey(iter), rightChild.getKey(0));
+                iChild.setCursor(iChild.getKeysNum(), rightChild.getCursor(0));
+                rightChild.copyKeys(rightChild.getKey(0), rightChild.getKey(1), rightChild.getKeysNum() - 1);
+                rightChild.copyCursors(rightChild.getCursorPtr(0), rightChild.getCursorPtr(1),
+                        rightChild.getKeysNum());
+                rightChild.setKeyNum(rightChild.getKeysNum() - 1);
+                iChild.writePage();
+                rightChild.writePage();
+                page.writePage();
+                return findPageWithK(iChild, k);
+            }
+        }
+        if (iter != 0)
+        {
+            PageWrapper leftChild(this);
+            leftChild.readPage(page.getCursor(iter - 1));
+            --iter;
+            iChild.setKeyNum(iChild.getKeysNum() + 1);
+            iChild.copyKeys(iChild.getKey(1), iChild.getKey(0), iChild.getKeysNum() - 1);
+            iChild.copyKey(iChild.getKey(0), page.getKey(iter));
+            if (page.getKeysNum() - iter > 0)
+                page.copyKeys(page.getKey(iter), page.getKey(iter + 1), page.getKeysNum() - iter - 1);
+            if (page.getKeysNum() - iter > 0)
+                page.copyCursors(page.getCursorPtr(iter), page.getCursorPtr(iter + 1), page.getKeysNum() - iter + 1);
+            iChild.setKeyNum(getMaxKeys());
+            iChild.copyCursors(iChild.getCursorPtr(getOrder()), iChild.getCursorPtr(0), getOrder());
+            iChild.copyKeys(iChild.getKey(getMinKeys()), iChild.getKey(0), getOrder());
+            iChild.copyKeys(iChild.getKey(0), leftChild.getKey(0), getMinKeys());
+            iChild.copyCursors(iChild.getCursorPtr(0), leftChild.getCursorPtr(0), getOrder());
+            if (page.isRoot() && page.getKeysNum() == 1)
+                iChild.setAsRoot();
+            else
+                page.setKeyNum(page.getKeysNum() - 1);
+            page.writePage();
+            iChild.writePage();
+        }
+        else{
+            PageWrapper rightChild(this);
+            rightChild.readPage(page.getCursor(iter + 1));
+            iChild.setKeyNum(iChild.getKeysNum() + 1);
+            iChild.copyKey(iChild.getKey(iChild.getKeysNum() - 1), page.getKey(iter));
+            if (page.getKeysNum() - iter > 0)
+                page.copyKeys(page.getKey(iter), page.getKey(iter + 1), page.getKeysNum() - iter - 1);
+            if (page.getKeysNum() - iter > 0)
+                page.copyCursors(page.getCursorPtr(iter + 1), page.getCursorPtr(iter + 2), page.getKeysNum() - iter + 1);
+            iChild.setKeyNum(getMaxKeys());
+            iChild.copyKeys(iChild.getKey(getOrder()), rightChild.getKey(0), getMinKeys());
+            iChild.copyCursors(iChild.getCursorPtr(getOrder()), rightChild.getCursorPtr(0), getOrder() + 1);
+            if (page.isRoot() && page.getKeysNum() == 1)
+                iChild.setAsRoot();
+            else
+                page.setKeyNum(page.getKeysNum() - 1);
+            page.writePage();
+            iChild.writePage();
+        }
+
+    }
+    return findPageWithK(iChild, k);
+}
+
+int BaseBTree::removeAll(const xi::Byte *k)
+{
+    UInt sum = 0;
+    while (remove(k))
+    {
+        ++sum;
+    }
+    return sum;
 }
 
 //UInt BaseBTree::allocPageInternal(UShort keysNum, NodeType nt, PageWrapper& pw)
@@ -610,10 +870,47 @@ void BaseBTree::PageWrapper::splitChild(UShort iChild)
     if (iChild > getKeysNum())
         throw std::invalid_argument("Cursor not exists");
 
+    //TODO: Логическая проверка
 
-    // TODO: реализовать студентам
+    //Создаем и записываем страницу i-ого ребенка
+    PageWrapper iChildPage(_tree);
+    iChildPage.readPage(getCursor(iChild));
 
-    //...
+    //Создаем новую страницу и распологаем его в памяти
+    PageWrapper newChildrenPage(_tree);
+    newChildrenPage.allocPage(_tree->getMinKeys(), iChildPage.isLeaf());
+
+    // копируем ключи с t по 2t -1 в новую вершину
+    copyKeys(newChildrenPage.getKey(0),
+             iChildPage.getKey(_tree->getOrder()),
+             _tree->getMinKeys());
+    copyCursors(newChildrenPage.getCursorPtr(0),
+                iChildPage.getCursorPtr(_tree->getOrder()),
+                _tree->getOrder());
+
+    // Запоминаем центральный ключ в ребенке, его мы потом запишим в родителя
+    Byte* middleKey = iChildPage.getKey(_tree->getMinKeys());
+
+
+
+    // Освобождаем место под новый ключ в родители
+    setKeyNum(getKeysNum() + 1);
+
+    copyCursors(getCursorPtr(iChild + 1), getCursorPtr(iChild), getKeysNum() - iChild);
+
+    copyKeys(getKey(iChild + 1), getKey(iChild), getKeysNum() - iChild - 1);
+
+    //Записываем новый курсор и ключ
+    setCursor(iChild + 1, newChildrenPage.getPageNum());
+    copyKey(getKey(iChild), middleKey);
+
+    // Меняем количество элементов в ребенке так как остальные мы уже скопировали
+    iChildPage.setKeyNum(_tree->getMinKeys());
+
+    //Записываем страницы в память
+    newChildrenPage.writePage();
+    iChildPage.writePage();
+    writePage();
 }
 
 
@@ -626,12 +923,67 @@ void BaseBTree::PageWrapper::insertNonFull(const Byte* k)
     if (!c)
         throw std::runtime_error("Comparator not set. Can't insert");
 
-    // TODO: реализовать студентам
+    // TODO: Проверить реализацию
 
-    //...
+    int keyNum = getKeysNum() - 1;
+
+    if(isLeaf())
+    {
+        setKeyNum(getKeysNum() + 1);
+        while( keyNum >= 0 && c->compare(k, getKey(keyNum), _tree->getRecSize()))
+        {
+            copyKey(getKey(keyNum + 1), getKey(keyNum));
+            --keyNum;
+        }
+        copyKey(getKey(keyNum + 1), k);
+        writePage();
+    }
+    else
+    {
+        while( keyNum >= 0 && c->compare(k, getKey(keyNum), _tree->getRecSize()))
+        {
+            --keyNum;
+        }
+        ++keyNum;
+        PageWrapper iChild(_tree);
+        iChild.readPage(getCursor(keyNum));
+        if(iChild.getKeysNum() == _tree->getMaxKeys())
+        {
+            splitChild(keyNum);
+            if(c->compare(getKey(keyNum), k, _tree->getRecSize())
+            || c->isEqual(getKey(keyNum), k, _tree->getRecSize()))
+            {
+                ++keyNum;
+            }
+        }
+        writePage();
+        iChild.readPage(getCursor(keyNum));
+        iChild.insertNonFull(k);
+    }
 }
 
+void BaseBTree::insert(const xi::Byte *k)
+{
+    //ToDo: Проверка на дурака
 
+    PageWrapper root(this);
+    root.readPage(getRootPageNum());
+
+    if(root.getKeysNum() == _maxKeys)
+    {
+        PageWrapper newRootPage(this);
+        newRootPage.allocNewRootPage();
+        newRootPage.setAsRoot();
+        newRootPage.setKeyNum(0);
+        newRootPage.setCursor(0, root.getPageNum());
+        newRootPage.splitChild(0);
+        newRootPage.insertNonFull(k);
+    }
+    else
+    {
+       root.insertNonFull(k);
+    }
+}
 
 
 //==============================================================================

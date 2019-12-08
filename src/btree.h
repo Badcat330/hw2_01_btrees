@@ -16,6 +16,7 @@
 #ifndef BTREE_BTREE_H_
 #define BTREE_BTREE_H_
 
+#define BTREE_WITH_DELETION
 
 #include <string>
 #include <fstream>
@@ -471,11 +472,12 @@ public:
      */
 
     void insert(const Byte* k);
-    
-    /** \brief Для заданного ключа \c k ищет первое его вхождение в дерево по принципу эквивалентности. 
+
+    /** \brief Для заданного ключа \c k ищет первое его вхождение в дерево по принципу эквивалентности.
      *  Если ключ найден, возвращает указатель на подлежащий массив, иначе nullptr.
      */
     Byte* search(const Byte* k);
+
 
     /** \brief Для заданного ключа \c k ищет все его его вхождения в дерево по принципу эквивалентности.
      *  Каждый найденный ключ добавляется в переданный список ключей \c keys.
@@ -484,14 +486,18 @@ public:
      */
     int searchAll(const Byte* k, std::list<Byte*>& keys);
 
+protected:
+    Byte* search(PageWrapper& page,const Byte* k);
+    void searchAll(PageWrapper& page, const Byte* k, std::list<Byte*>& keys);
 
+public:
 #ifdef BTREE_WITH_DELETION
 
-    /** \brief Для заданного ключа \c k находит первое вхождение его в дерево по принципу эквивалентности 
+    /** \brief Для заданного ключа \c k находит первое вхождение его в дерево по принципу эквивалентности
      *  и удаляет его из дерева.
      *
      *  \returns истину, если удален, ложь иначе.
-     */    
+     */
     bool remove (const Byte* k);
 
     /** \brief Для заданного ключа \c k находит все вхождения его в дерево по принципу эквивалентности
@@ -501,6 +507,9 @@ public:
      */
     int removeAll(const Byte* k);
 
+
+protected:
+    UInt findPageWithK(PageWrapper& page, const Byte* k);
 
 #endif
 
